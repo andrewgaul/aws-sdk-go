@@ -1,4 +1,4 @@
-package v2
+package v2s3
 
 import (
 	"crypto/hmac"
@@ -46,7 +46,7 @@ func Sign(req *request.Request) {
 		return
 	}
 
-	v2 := signer{
+	v2s3 := signer{
 		Request:          req.HTTPRequest,
 		Time:             req.Time,
 		Credentials:      req.Service.Config.Credentials,
@@ -55,7 +55,7 @@ func Sign(req *request.Request) {
 		S3ForcePathStyle: aws.BoolValue(req.Service.Config.S3ForcePathStyle),
 	}
 
-	req.Error = v2.Sign()
+	req.Error = v2s3.Sign()
 
 	if req.Error != nil {
 		return
@@ -63,66 +63,67 @@ func Sign(req *request.Request) {
 
 	if req.HTTPRequest.Method == "POST" {
 		// Set the body of the request based on the modified query parameters
-		req.SetStringBody(v2.Query.Encode())
+		req.SetStringBody(v2s3.Query.Encode())
 
 		// Now that the body has changed, remove any Content-Length header,
 		// because it will be incorrect
 		req.HTTPRequest.ContentLength = 0
 		req.HTTPRequest.Header.Del("Content-Length")
 	} else {
-		req.HTTPRequest.URL.RawQuery = v2.Query.Encode()
+		req.HTTPRequest.URL.RawQuery = v2s3.Query.Encode()
 	}
 }
 
-func (v2 *signer) Sign() error {
-	credValue, err := v2.Credentials.Get()
+func (v2s3 *signer) Sign() error {
+	credValue, err := v2s3.Credentials.Get()
 	if err != nil {
 		return err
 	}
 
-	if v2.Request.Method == "POST" {
+	if v2s3.Request.Method == "POST" {
 		// Parse the HTTP request to obtain the query parameters that will
 		// be used to build the string to sign. Note that because the HTTP
 		// request will need to be modified, the PostForm and Form properties
 		// are reset to nil after parsing.
-		v2.Request.ParseForm()
-		v2.Query = v2.Request.PostForm
-		v2.Request.PostForm = nil
-		v2.Request.Form = nil
+		v2s3.Request.ParseForm()
+		v2s3.Query = v2s3.Request.PostForm
+		v2s3.Request.PostForm = nil
+		v2s3.Request.Form = nil
 	} else {
-		v2.Query = v2.Request.URL.Query()
+		v2s3.Query = v2s3.Request.URL.Query()
 	}
 
-	expires := fmt.Sprintf("%d", v2.Time.Unix()+expiresDuration)
+	expires := fmt.Sprintf("%d", v2s3.Time.Unix()+expiresDuration)
 
 	// Set new query parameters
-	v2.Query.Set("AWSAccessKeyId", credValue.AccessKeyID)
-	v2.Query.Set("Expires", expires)
+	v2s3.Query.Set("AWSAccessKeyId", credValue.AccessKeyID)
+	v2s3.Query.Set("Expires", expires)
 	if credValue.SessionToken != "" {
-		v2.Query.Set("SecurityToken", credValue.SessionToken)
+		v2s3.Query.Set("SecurityToken", credValue.SessionToken)
 	}
 
 	// in case this is a retry, ensure no signature present
-	v2.Query.Del("Signature")
+	v2s3.Query.Del("Signature")
 
-	method := v2.Request.Method
-	host := strings.SplitN(v2.Request.URL.Host, ".", 2)[0]
-	path := v2.Request.URL.Path
+	method := v2s3.Request.Method
+	path := v2s3.Request.URL.Path
 	if path == "" {
-		path = "/" + strings.Join(strings.Split(v2.Request.URL.Opaque, "/")[3:], "/")
+		panic("gaul: " + v2s3.Request.URL.Opaque)
+		path = "/" + strings.Join(strings.Split(v2s3.Request.URL.Opaque, "/")[3:], "/")
 	}
-	if !v2.S3ForcePathStyle {
+	if !v2s3.S3ForcePathStyle {
+		host := strings.SplitN(v2s3.Request.URL.Host, ".", 2)[0]
 		path = "/" + host + path
 	}
 
 	// obtain all of the query keys and sort them
-	queryKeys := make([]string, 0, len(v2.Query))
-	for key := range v2.Query {
+	queryKeys := make([]string, 0, len(v2s3.Query))
+	for key := range v2s3.Query {
 		queryKeys = append(queryKeys, key)
 	}
 	sort.Strings(queryKeys)
 
-	// build the canonical string for the V2 signature
+	// build the canonical string for the v2s3 signature
 	tmp := []string{
 		method,
 		"", // TODO: Content-MD5
@@ -134,19 +135,19 @@ func (v2 *signer) Sign() error {
 			continue
 		}
 		k := strings.Replace(url.QueryEscape(key), "+", "%20", -1)
-		v := strings.Replace(url.QueryEscape(v2.Query.Get(key)), "+", "%20", -1)
+		v := strings.Replace(url.QueryEscape(v2s3.Query.Get(key)), "+", "%20", -1)
 		tmp = append(tmp, k+": "+v)
 	}
 	tmp = append(tmp, path)
-	v2.stringToSign = strings.Join(tmp, "\n")
+	v2s3.stringToSign = strings.Join(tmp, "\n")
 
 	hash := hmac.New(sha1.New, []byte(credValue.SecretAccessKey))
-	hash.Write([]byte(v2.stringToSign))
-	v2.signature = base64.StdEncoding.EncodeToString(hash.Sum(nil))
-	v2.Query.Set("Signature", v2.signature)
+	hash.Write([]byte(v2s3.stringToSign))
+	v2s3.signature = base64.StdEncoding.EncodeToString(hash.Sum(nil))
+	v2s3.Query.Set("Signature", v2s3.signature)
 
-	if v2.Debug.Matches(aws.LogDebugWithSigning) {
-		v2.logSigningInfo()
+	if v2s3.Debug.Matches(aws.LogDebugWithSigning) {
+		v2s3.logSigningInfo()
 	}
 
 	return nil
@@ -159,7 +160,7 @@ const logSignInfoMsg = `DEBUG: Request Signature:
 %s
 -----------------------------------------------------`
 
-func (v2 *signer) logSigningInfo() {
-	msg := fmt.Sprintf(logSignInfoMsg, v2.stringToSign, v2.Query.Get("Signature"))
-	v2.Logger.Log(msg)
+func (v2s3 *signer) logSigningInfo() {
+	msg := fmt.Sprintf(logSignInfoMsg, v2s3.stringToSign, v2s3.Query.Get("Signature"))
+	v2s3.Logger.Log(msg)
 }

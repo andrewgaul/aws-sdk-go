@@ -4,12 +4,13 @@ package s3
 
 import (
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/corehandlers"
 	"github.com/aws/aws-sdk-go/aws/defaults"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/service"
 	"github.com/aws/aws-sdk-go/aws/service/serviceinfo"
 	"github.com/aws/aws-sdk-go/internal/protocol/restxml"
-	"github.com/aws/aws-sdk-go/internal/signer/v4"
+	"github.com/aws/aws-sdk-go/internal/signer/v2"
 )
 
 // S3 is a client for Amazon S3.
@@ -35,7 +36,8 @@ func New(config *aws.Config) *S3 {
 	service.Initialize()
 
 	// Handlers
-	service.Handlers.Sign.PushBack(v4.Sign)
+	service.Handlers.Sign.PushBack(v2.Sign)
+	service.Handlers.Sign.PushBackNamed(corehandlers.BuildContentLengthHandler)
 	service.Handlers.Build.PushBack(restxml.Build)
 	service.Handlers.Unmarshal.PushBack(restxml.Unmarshal)
 	service.Handlers.UnmarshalMeta.PushBack(restxml.UnmarshalMeta)
